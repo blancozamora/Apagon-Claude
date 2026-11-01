@@ -80,6 +80,7 @@ fun ScraperScreen(
     var isRawTextExpanded by remember { mutableStateOf(false) }
 
     val presetUrls = listOf(
+        "https://api.rss2json.com/v1/api.json?rss_url=https://tg.i-c-a.su/rss/UNE_EEG" to "UNE_EEG (rss2json)",
         "https://t.me/s/une_eeg" to "Telegram Canal Oficial",
         "https://mobile.twitter.com/granma_empresa" to "Twitter Granma Empresa"
     )

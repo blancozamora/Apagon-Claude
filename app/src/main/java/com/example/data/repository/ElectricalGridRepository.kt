@@ -34,7 +34,7 @@ class ElectricalGridRepository {
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    private val _lastScrapedUrl = MutableStateFlow("https://t.me/s/une_eeg")
+    private val _lastScrapedUrl = MutableStateFlow("https://api.rss2json.com/v1/api.json?rss_url=https://tg.i-c-a.su/rss/UNE_EEG")
     val lastScrapedUrl: StateFlow<String> = _lastScrapedUrl.asStateFlow()
 
     fun getMunicipalityStatuses(): List<MunicipalityStatus> {
