@@ -234,24 +234,7 @@ fun ScraperScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "URL del Canal Oficial",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
                         Spacer(modifier = Modifier.height(8.dp))
-
-                        OutlinedTextField(
-                            value = urlInput,
-                            onValueChange = { urlInput = it },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("scraper_url_input"),
-                            placeholder = { Text("https://...", fontSize = 13.sp) },
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp)
-                        )
 
                         Spacer(modifier = Modifier.height(10.dp))
 
