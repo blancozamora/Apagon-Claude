@@ -55,6 +55,16 @@ class ReportParserEngine(private val parser: ReportTextParser = ReportTextParser
 
             Result.success(parser.reportsFromPosts(posts, sourceUrl = url))
         } catch (e: Exception) {
+            // Fallback: si rss2json falló, intenta la URL directa de Telegram
+            if (url.contains("rss2json.com") || url.contains("api.json")) {
+                val telegramUrl = "https://t.me/s/une_eeg"
+                return try {
+                    fetchChannelReports(telegramUrl)
+                } catch (ee: Exception) {
+                    Log.e("ReportParserEngine", "Error fetching channel (rss2json + telegram fallback)", ee)
+                    Result.failure(ee)
+                }
+            }
             Log.e("ReportParserEngine", "Error fetching channel", e)
             Result.failure(e)
         }
