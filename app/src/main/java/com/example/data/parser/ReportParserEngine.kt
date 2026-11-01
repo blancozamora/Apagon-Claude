@@ -43,6 +43,24 @@ class ReportParserEngine(private val parser: ReportTextParser = ReportTextParser
                 response.body?.string().orEmpty()
             }
 
+            // Feed HTML dedicado de tg.i-c-a.su (vía rss2json o directo)
+            if (html.contains("<article class=\"item\">")) {
+                val feedItems = when {
+                    url.contains("rss2json.com") || url.contains("api.json") -> {
+                        val root = JSONObject(html)
+                        val itemsArray = root.optJSONArray("items") ?: return@withContext Result.success(emptyList())
+                        val contents = (0 until itemsArray.length()).mapNotNull { i ->
+                            itemsArray.getJSONObject(i).optString("content", null)
+                        }
+                        FeedHtmlParser().parse(contents.joinToString("\n"))
+                    }
+                    else -> FeedHtmlParser().parse(html)
+                }
+                val reports = FeedHtmlParser().toReports(feedItems, sourceUrl = url)
+                if (reports.isEmpty()) throw IOException("No se encontraron publicaciones con texto en la fuente")
+                return@withContext Result.success(reports)
+            }
+
             val posts = when {
                 url.contains("rss2json.com") || url.contains("api.json") -> parseRss2Json(html)
                 TelegramChannelParser.looksLikeChannelView(html) -> TelegramChannelParser.parse(html)
