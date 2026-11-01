@@ -1,0 +1,6 @@
+{
+  "name": "Granma Eléctrica",
+  "description": "Monitoreo y análisis en tiempo real del estado de energía eléctrica por municipios y circuitos en la provincia de Granma.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
