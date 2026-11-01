@@ -154,7 +154,7 @@ class FeedHtmlParser(private val catalog: List<CircuitInfo> = GranmaDataProvider
         }
     }
 
-    private fun resolveCircuit(name: String): List<CircuitInfo> {
+    internal fun resolveCircuit(name: String): List<CircuitInfo> {
         val clean = cleanFeedName(name)
         val norm = normalize(clean)
         if (norm.isBlank()) return emptyList()
@@ -168,7 +168,7 @@ class FeedHtmlParser(private val catalog: List<CircuitInfo> = GranmaDataProvider
         }
     }
 
-    private fun cleanFeedName(name: String): String {
+    internal fun cleanFeedName(name: String): String {
         var n = name.trim()
         n = n.replace(Regex("""\s*\([^)]*\)"""), "")
         n = n.replace(Regex("""\s*o\d+$""", RegexOption.IGNORE_CASE), "")
