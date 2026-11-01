@@ -5,6 +5,7 @@ import com.example.data.model.CircuitStatus
 import com.example.data.parser.FeedHtmlParser
 import com.example.data.parser.FeedItem
 import com.example.data.provider.GranmaDataProvider
+import com.example.data.repository.GridUpdater
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -15,14 +16,21 @@ class FeedHtmlParserTest {
     private val parser = FeedHtmlParser()
     private val catalog = GranmaDataProvider.getDefaultCircuits()
 
+    private companion object {
+        /** 2026-11-01T20:03:07Z en milisegundos */
+        const val UTC_20_03_07 = 1793563387000L
+    }
+
     @Test
-    fun `parsea feed HTML real de tg.i-c-a.su con múltiples artículos`() {
+    fun `parsea feed HTML real de tg-i-c-a con múltiples artículos`() {
         val html = feedHtmlSample()
         val items = parser.parse(html)
 
         assertEquals(10, items.size)
 
-        val first = items[0]
+        // parse() devuelve de la más antigua a la más reciente
+        assertEquals("41508", items.first().postId)
+        val first = items.last()
         assertEquals("[Photo] ⚡️Actualización del Sistema Electroenergético en la Provincia de Granma.⚡️", first.title)
         assertEquals("41518", first.postId)
         assertNotNull(first.publishedAtMs)
@@ -58,68 +66,133 @@ class FeedHtmlParserTest {
 
         assertEquals(10, reports.size)
 
-        val firstReport = reports[0]
-        assertEquals("41518", firstReport.postId)
-        assertEquals(58, firstReport.generationDeficitMW)
-        assertTrue(firstReport.circuitUpdates.isNotEmpty())
+        // De la más antigua a la más reciente: la última es el aviso de las 20:03
+        val latest = reports.last()
+        assertEquals("41518", latest.postId)
+        assertEquals(58, latest.generationDeficitMW)
 
-        val outageIds = firstReport.circuitUpdates.filter { it.status == CircuitStatus.OUTAGE }.map { it.circuitId }
-        val energizedIds = firstReport.circuitUpdates.filter { it.status == CircuitStatus.ENERGIZED }.map { it.circuitId }
-        val rotationIds = firstReport.circuitUpdates.filter { it.status == CircuitStatus.ROTATION }.map { it.circuitId }
+        fun ids(status: CircuitStatus) =
+            latest.circuitUpdates.filter { it.status == status }.map { it.circuitId }.toSet()
 
-        assertTrue(outageIds.contains("jig_3"))  // Charco Redondo
-        assertTrue(energizedIds.any { it == "bay_1" || it == "bay_2" || it == "bay_3" || it == "bay_4" || it == "bay_5" || it == "bay_6" || it == "bay_7" })
-        assertTrue(rotationIds.isNotEmpty())
+        assertEquals(
+            setOf("jig_3", "feed_palmaron", "feed_el_yarey", "feed_santa_rita", "feed_horacio_rodriguez", "feed_saco_centro"),
+            ids(CircuitStatus.OUTAGE)
+        )
+        assertEquals(
+            setOf("feed_desarrollo", "feed_jiguani_desarrollo", "feed_banda_ecil"),
+            ids(CircuitStatus.ENERGIZED)
+        )
+        assertEquals(
+            setOf("feed_jimmy_hirzel", "feed_siboney_convertido", "gui_1", "feed_julia", "cam_2"),
+            ids(CircuitStatus.ROTATION)
+        )
+        // Los 14 nombres del aviso se resolvieron
+        assertEquals(14, latest.circuitUpdates.size)
+        assertTrue(!latest.aiSummary.contains("No resueltos"))
+    }
+
+    @Test
+    fun `todos los nombres del feed resuelven salvo Las Mercedes sin codigo`() {
+        val items = parser.parse(feedHtmlSample())
+        val names = items.flatMap { it.outageNames + it.energizedNames + it.rotationNames }.toSet()
+        val unresolved = names.filter { parser.resolveCircuit(it).isEmpty() }
+        // "Las Mercedes" aparece una vez sin código (o813/o809): es ambiguo y no se adivina
+        assertEquals(listOf("Las Mercedes"), unresolved)
     }
 
     @Test
     fun `resuelve nombres de circuito del feed contra catálogo`() {
-        // Charco Redondo -> jig_3 (Circuito Charco Redondo)
-        val matches = parser.resolveCircuit("Charco Redondo")
-        assertEquals(1, matches.size)
-        assertEquals("jig_3", matches[0].id)
+        fun ids(name: String) = parser.resolveCircuit(name).map { it.id }
 
-        // Marea del Portillo -> pil_2
-        val matches2 = parser.resolveCircuit("Marea del Portillo")
-        assertEquals(1, matches2.size)
-        assertEquals("pil_2", matches2[0].id)
+        // Equivalencias explícitas con el catálogo base (GranmaDataProvider.getFeedAliases)
+        assertEquals(listOf("jig_3"), ids("Charco Redondo"))
+        assertEquals(listOf("pil_2"), ids("Marea del Portillo"))
+        assertEquals(listOf("yar_2"), ids("Sofía"))
+        assertEquals(listOf("niq_1"), ids("Niquero (completo)"))
+        assertEquals(listOf("med_1"), ids("Media Luna"))
+        assertEquals(listOf("cau_1"), ids("Cauto Cristo"))
+        assertEquals(listOf("gui_1"), ids("Guisa"))
 
-        // Sofía -> yar_2
-        val matches3 = parser.resolveCircuit("Sofía")
-        assertEquals(1, matches3.size)
-        assertEquals("yar_2", matches3[0].id)
+        // Circuitos propios del feed (nombre exacto)
+        assertEquals(listOf("feed_hospital_infantil"), ids("Hospital Infantil"))
+        assertEquals(listOf("feed_guisa_2"), ids("Guisa 2"))
+        assertEquals(listOf("feed_jiguani"), ids("Jiguaní"))
+        assertEquals(listOf("feed_desarrollo"), ids("Desarrollo"))
+        assertEquals(listOf("feed_jiguani_desarrollo"), ids("Jiguaní Desarrollo"))
 
-        // Hospital Infantil -> bay_6 (Circuito 6 Hospital)
-        val matches4 = parser.resolveCircuit("Hospital Infantil")
-        assertTrue(matches4.any { it.id == "bay_6" })
+        // Los códigos distinguen circuitos distintos; mayúsculas y acentos no importan
+        assertEquals(listOf("feed_las_mercedes_o813"), ids("Las Mercedes o813"))
+        assertEquals(listOf("feed_las_mercedes_o809"), ids("Las Mercedes o809"))
+        assertEquals(listOf("feed_ceramica_roja_o275"), ids("CERAMICA ROJA o275"))
 
-        // Niquero (completo) -> niq_1 o niq_2
-        val matches5 = parser.resolveCircuit("Niquero (completo)")
-        assertTrue(matches5.any { it.id.startsWith("niq_") })
-
-        // Media Luna -> med_1
-        val matches6 = parser.resolveCircuit("Media Luna")
-        assertTrue(matches6.any { it.id == "med_1" })
-
-        // Cauto Cristo -> cau_1
-        val matches7 = parser.resolveCircuit("Cauto Cristo")
-        assertEquals(1, matches7.size)
-        assertEquals("cau_1", matches7[0].id)
+        // Sin código es ambiguo y un nombre desconocido no se adivina por parecido
+        assertTrue(ids("Las Mercedes").isEmpty())
+        assertTrue(ids("Circuito Inventado").isEmpty())
     }
 
     @Test
-    fun `limpia sufijos del nombre del feed`() {
+    fun `el catalogo completo no repite ids ni nombres`() {
+        val all = GranmaDataProvider.getDefaultCircuits()
+        assertEquals(all.size, all.map { it.id }.toSet().size)
+        assertEquals(all.size, all.map { FeedHtmlParser.normalize(it.municipality + "|" + it.name) }.toSet().size)
+        // Las equivalencias apuntan a circuitos que existen
+        val ids = all.map { it.id }.toSet()
+        assertTrue(GranmaDataProvider.getFeedAliases().values.all { it in ids })
+    }
+
+    @Test
+    fun `quita los parentesis del nombre pero conserva los codigos`() {
         assertEquals("Niquero", parser.cleanFeedName("Niquero (completo)"))
-        assertEquals("Las Mercedes", parser.cleanFeedName("Las Mercedes o813"))
-        assertEquals("Las Mercedes", parser.cleanFeedName("Las Mercedes o809"))
+        assertEquals("Las Mercedes o813", parser.cleanFeedName("Las Mercedes o813"))
+        assertEquals("Las Mercedes o809", parser.cleanFeedName("Las Mercedes o809"))
         assertEquals("Charco Redondo", parser.cleanFeedName("Charco Redondo"))
     }
 
     @Test
-    fun `parsea fecha ISO sin zona horaria`() {
-        val ms = FeedHtmlParser.parseFeedDate("2026-11-01T20:03:07")
-        assertNotNull(ms)
-        // Verificar que corresponde a 2026-11-01 20:03:07
+    fun `fecha sin zona se lee como UTC sin depender de la zona del dispositivo`() {
+        // 2026-11-01T20:03:07Z
+        assertEquals(UTC_20_03_07, FeedHtmlParser.parseFeedDate("2026-11-01T20:03:07"))
+        assertEquals(UTC_20_03_07, FeedHtmlParser.parseFeedDate("2026-11-01 20:03:07"))
+    }
+
+    @Test
+    fun `un offset explicito manda sobre la zona asumida`() {
+        assertEquals(UTC_20_03_07, FeedHtmlParser.parseFeedDate("2026-11-01T20:03:07Z"))
+        assertEquals(UTC_20_03_07, FeedHtmlParser.parseFeedDate("2026-11-01T20:03:07+00:00"))
+        assertEquals(UTC_20_03_07, FeedHtmlParser.parseFeedDate("2026-11-01T15:03:07-05:00"))
+        assertEquals(UTC_20_03_07, FeedHtmlParser.parseFeedDate("2026-11-01T20:03:07.000Z"))
+        assertEquals(UTC_20_03_07, FeedHtmlParser.parseFeedDate("Sun, 01 Nov 2026 20:03:07 +0000"))
+    }
+
+    @Test
+    fun `fechas invalidas devuelven null`() {
+        assertEquals(null, FeedHtmlParser.parseFeedDate(null))
+        assertEquals(null, FeedHtmlParser.parseFeedDate(""))
+        assertEquals(null, FeedHtmlParser.parseFeedDate("ayer"))
+        assertEquals(null, FeedHtmlParser.parseFeedDate("2026-11-01"))
+        assertEquals(null, FeedHtmlParser.parseFeedDate("2026-11-01T20:03:07 basura"))
+    }
+
+    @Test
+    fun `aplicar todo el feed en orden deja el estado del ultimo aviso y descarta lo vencido`() {
+        val reports = parser.toReports(parser.parse(feedHtmlSample()), sourceUrl = "feed")
+        // 7 minutos después del último aviso (20:03:07 UTC). Se fija con una constante y no con parseFeedDate,
+        // para que esta prueba no se anule a sí misma si la zona asumida estuviera mal.
+        val now = UTC_20_03_07 + 7 * 60 * 1000L
+
+        var circuits = GranmaDataProvider.getDefaultCircuits()
+        reports.forEach { circuits = GridUpdater.applyReport(circuits, it, now) }
+        fun status(id: String) = circuits.first { it.id == id }.status
+
+        assertEquals(CircuitStatus.OUTAGE, status("feed_palmaron"))             // 20:03 afectado
+        assertEquals(CircuitStatus.ENERGIZED, status("feed_desarrollo"))        // 17:26 afectado, 20:03 restablecido
+        assertEquals(CircuitStatus.ROTATION, status("feed_jimmy_hirzel"))       // 20:03 mayor tiempo de afectación
+        assertEquals(CircuitStatus.OUTAGE, status("feed_campechuela_pueblo"))   // 17:26 afectado y no se vuelve a nombrar
+        // Solo aparece a las 14:06, que ya tiene más de 6 h: vuelve a no tener datos.
+        // (Esta comprobación depende de leer las horas del feed como UTC.)
+        assertEquals(CircuitStatus.UNKNOWN, status("feed_diesel_caymare"))
+        // Un circuito que el feed nunca menciona sigue sin datos
+        assertEquals(CircuitStatus.UNKNOWN, status("bay_1"))
     }
 
     private fun feedHtmlSample(): String = """

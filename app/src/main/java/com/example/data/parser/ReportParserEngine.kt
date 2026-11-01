@@ -9,8 +9,6 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
-import java.text.SimpleDateFormat
-import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /** Capa de red: descarga el canal y delega la interpretación en [ReportTextParser]. */
@@ -132,24 +130,8 @@ class ReportParserEngine(private val parser: ReportTextParser = ReportTextParser
         }
     }
 
-    private fun parseRssDate(value: String?): Long? {
-        if (value.isNullOrBlank()) return null
-        val formats = listOf(
-            "yyyy-MM-dd'T'HH:mm:ss",
-            "EEE, dd MMM yyyy HH:mm:ss Z",
-            "yyyy-MM-dd'T'HH:mm:ssXXX",
-            "yyyy-MM-dd HH:mm:ss"
-        )
-        for (fmt in formats) {
-            val parsed = try {
-                SimpleDateFormat(fmt, Locale.US).parse(value)?.time
-            } catch (e: Exception) {
-                null
-            }
-            if (parsed != null) return parsed
-        }
-        return null
-    }
+    /** Misma lectura de fechas que el feed HTML: un offset explícito manda y, sin él, se asume UTC. */
+    private fun parseRssDate(value: String?): Long? = FeedHtmlParser.parseFeedDate(value)
 
     fun parseReportText(text: String, sourceUrl: String = "Texto ingresado"): ElectricalReport =
         parser.parse(text, sourceUrl)
