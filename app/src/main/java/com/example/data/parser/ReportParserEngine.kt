@@ -29,63 +29,78 @@ class ReportParserEngine(private val parser: ReportTextParser = ReportTextParser
      * (el último elemento es siempre el más nuevo).
      */
     suspend fun fetchChannelReports(url: String): Result<List<ElectricalReport>> = withContext(Dispatchers.IO) {
-        try {
-            val isTelegram = url.contains("t.me/")
-            val formattedUrl = if (isTelegram && !url.contains("t.me/s/")) url.replace("t.me/", "t.me/s/") else url
+        val telegramUrl = "https://t.me/s/une_eeg"
 
-            val request = Request.Builder()
-                .url(formattedUrl)
-                .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Mobile Safari/537.36")
-                .build()
+        fun tryFetch(u: String, isFallback: Boolean): Result<List<ElectricalReport>> {
+            try {
+                val isTelegram = u.contains("t.me/")
+                val formattedUrl = if (isTelegram && !u.contains("t.me/s/")) u.replace("t.me/", "t.me/s/") else u
 
-            val html = client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw IOException("El servidor respondió HTTP ${response.code}")
-                response.body?.string().orEmpty()
-            }
+                val request = Request.Builder()
+                    .url(formattedUrl)
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Mobile Safari/537.36")
+                    .build()
 
-            // Feed HTML dedicado de tg.i-c-a.su (vía rss2json o directo)
-            if (html.contains("<article class=\"item\">")) {
-                val feedItems = when {
-                    url.contains("rss2json.com") || url.contains("api.json") -> {
-                        val root = JSONObject(html)
-                        val itemsArray = root.optJSONArray("items") ?: return@withContext Result.success(emptyList())
-                        val contents = (0 until itemsArray.length()).mapNotNull { i ->
-                            itemsArray.getJSONObject(i).optString("content", null)
+                val html = client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) throw IOException("El servidor respondió HTTP ${response.code}")
+                    response.body?.string().orEmpty()
+                }
+
+                // Feed HTML dedicado de tg.i-c-a.su (vía rss2json o directo)
+                if (html.contains("<article class=\"item\">")) {
+                    val feedItems = when {
+                        u.contains("rss2json.com") || u.contains("api.json") -> {
+                            val root = JSONObject(html)
+                            val itemsArray = root.optJSONArray("items") ?: return@tryFetch Result.success(emptyList())
+                            val contents = (0 until itemsArray.length()).mapNotNull { i ->
+                                itemsArray.getJSONObject(i).optString("content", null)
+                            }
+                            FeedHtmlParser().parse(contents.joinToString("\n"))
                         }
-                        FeedHtmlParser().parse(contents.joinToString("\n"))
+                        else -> FeedHtmlParser().parse(html)
                     }
-                    else -> FeedHtmlParser().parse(html)
+                    if (feedItems.isEmpty()) {
+                        if (!isFallback && (u.contains("rss2json.com") || u.contains("api.json"))) {
+                            return tryFetch(telegramUrl, true)
+                        }
+                        return@tryFetch Result.success(emptyList())
+                    }
+                    val reports = FeedHtmlParser().toReports(feedItems, sourceUrl = u)
+                    if (reports.isEmpty()) {
+                        if (!isFallback && (u.contains("rss2json.com") || u.contains("api.json"))) {
+                            return tryFetch(telegramUrl, true)
+                        }
+                        return@tryFetch Result.success(emptyList())
+                    }
+                    return@tryFetch Result.success(reports)
                 }
-                val reports = FeedHtmlParser().toReports(feedItems, sourceUrl = url)
-                if (reports.isEmpty()) throw IOException("No se encontraron publicaciones con texto en la fuente")
-                return@withContext Result.success(reports)
-            }
 
-            val posts = when {
-                url.contains("rss2json.com") || url.contains("api.json") -> parseRss2Json(html)
-                TelegramChannelParser.looksLikeChannelView(html) -> TelegramChannelParser.parse(html)
-                isTelegram -> throw IOException("El canal no tiene vista pública (t.me/s/) o no se pudo leer")
-                else -> TelegramChannelParser.plainText(html).takeIf { it.length > 50 }
-                    ?.let { listOf(ChannelPost(id = null, text = it.take(3000), publishedAtMs = null)) }
-                    .orEmpty()
-            }
-            if (posts.isEmpty()) throw IOException("No se encontraron publicaciones con texto en la fuente")
-
-            Result.success(parser.reportsFromPosts(posts, sourceUrl = url))
-        } catch (e: Exception) {
-            // Fallback: si rss2json falló, intenta la URL directa de Telegram
-            if (url.contains("rss2json.com") || url.contains("api.json")) {
-                val telegramUrl = "https://t.me/s/une_eeg"
-                return@withContext try {
-                    fetchChannelReports(telegramUrl)
-                } catch (ee: Exception) {
-                    Log.e("ReportParserEngine", "Error fetching channel (rss2json + telegram fallback)", ee)
-                    Result.failure(ee)
+                val posts = when {
+                    u.contains("rss2json.com") || u.contains("api.json") -> parseRss2Json(html)
+                    TelegramChannelParser.looksLikeChannelView(html) -> TelegramChannelParser.parse(html)
+                    isTelegram -> throw IOException("El canal no tiene vista pública (t.me/s/) o no se pudo leer")
+                    else -> TelegramChannelParser.plainText(html).takeIf { it.length > 50 }
+                        ?.let { listOf(ChannelPost(id = null, text = it.take(3000), publishedAtMs = null)) }
+                        .orEmpty()
                 }
+                if (posts.isEmpty()) {
+                    if (!isFallback && (u.contains("rss2json.com") || u.contains("api.json"))) {
+                        return tryFetch(telegramUrl, true)
+                    }
+                    throw IOException("No se encontraron publicaciones con texto en la fuente")
+                }
+
+                Result.success(parser.reportsFromPosts(posts, sourceUrl = u))
+            } catch (e: Exception) {
+                if (!isFallback && (u.contains("rss2json.com") || u.contains("api.json"))) {
+                    return tryFetch(telegramUrl, true)
+                }
+                Log.e("ReportParserEngine", "Error fetching channel${if (isFallback) " (fallback)" else ""}", e)
+                Result.failure(e)
             }
-            Log.e("ReportParserEngine", "Error fetching channel", e)
-            Result.failure(e)
         }
+
+        tryFetch(url, false)
     }
 
     /** Parsea la respuesta JSON de rss2json y devuelve los posts de más antigua a más reciente. */
@@ -118,6 +133,7 @@ class ReportParserEngine(private val parser: ReportTextParser = ReportTextParser
     private fun parseRssDate(value: String?): Long? {
         if (value.isNullOrBlank()) return null
         val formats = listOf(
+            "yyyy-MM-dd'T'HH:mm:ss",
             "EEE, dd MMM yyyy HH:mm:ss Z",
             "yyyy-MM-dd'T'HH:mm:ssXXX",
             "yyyy-MM-dd HH:mm:ss"

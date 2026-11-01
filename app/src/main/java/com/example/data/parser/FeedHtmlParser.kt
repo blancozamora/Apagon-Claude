@@ -24,6 +24,8 @@ class FeedHtmlParser(private val catalog: List<CircuitInfo> = GranmaDataProvider
             if (end < 0) null else chunk.substring(0, end)
         }
         return articles.map { parseArticle(it) }
+            .filter { it.publishedAtMs != null }
+            .sortedBy { it.publishedAtMs!! }
     }
 
     private fun parseArticle(html: String): FeedItem {
