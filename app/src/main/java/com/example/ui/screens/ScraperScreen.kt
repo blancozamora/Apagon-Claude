@@ -80,7 +80,7 @@ fun ScraperScreen(
     var isRawTextExpanded by remember { mutableStateOf(false) }
 
     val presetUrls = listOf(
-        "https://t.me/s/granma_empresa" to "Telegram Canal Oficial",
+        "https://t.me/s/une_eeg" to "Telegram Canal Oficial",
         "https://mobile.twitter.com/granma_empresa" to "Twitter Granma Empresa"
     )
 
@@ -247,7 +247,7 @@ fun ScraperScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("scraper_url_input"),
-                            placeholder = { Text("https://t.me/s/granma_empresa...", fontSize = 13.sp) },
+                            placeholder = { Text("https://...", fontSize = 13.sp) },
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp)
                         )

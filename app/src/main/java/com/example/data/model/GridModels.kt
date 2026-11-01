@@ -50,7 +50,7 @@ data class ElectricalReport(
     val date: String,             // Ej. "01/11/2026 - 08:00 AM"
     val title: String,            // Ej. "Parte Informativo de la Empresa Eléctrica Granma"
     val rawText: String,          // Full official announcement text
-    val sourceUrl: String,        // Ej. "https://t.me/s/granma_empresa"
+    val sourceUrl: String,        // Ej. "https://t.me/s/une_eeg"
     val generationDeficitMW: Int? = null, // Ej. 75 MW
     val affectedBlocks: List<String> = emptyList(), // Ej. ["Bloque 1", "Bloque 3"]
     val energizedCircuits: List<String> = emptyList(),
