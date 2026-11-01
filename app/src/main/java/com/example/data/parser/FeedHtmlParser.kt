@@ -9,6 +9,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlin.text.RegexOption
 
 /**
  * Parser dedicado al feed HTML de https://tg.i-c-a.su/rss/UNE_EEG.
@@ -16,18 +17,6 @@ import java.util.UUID
  * y los resuelve contra el catálogo de circuitos.
  */
 class FeedHtmlParser(private val catalog: List<CircuitInfo> = GranmaDataProvider.getDefaultCircuits()) {
-
-    private data class FeedItem(
-        val title: String,
-        val postId: String?,
-        val publishedAtMs: Long?,
-        val mwAffected: Int?,
-        val mwService: Int?,
-        val outageNames: List<String>,
-        val energizedNames: List<String>,
-        val rotationNames: List<String>,
-        val rawHtml: String
-    )
 
     fun parse(html: String): List<FeedItem> {
         val articles = html.split("<article class=\"item\">").drop(1).mapNotNull { chunk ->
@@ -43,7 +32,7 @@ class FeedHtmlParser(private val catalog: List<CircuitInfo> = GranmaDataProvider
             ?: "Actualización del Sistema Electroenergético"
         val postId = extractFirst(html, """t\.me/une_eeg/(\d+)""")
         val dateStr = extractFirst(html, """<time datetime="([^"]+)"""")
-        val publishedAtMs = parseFeedDate(dateStr)
+        val publishedAtMs = FeedHtmlParser.parseFeedDate(dateStr)
 
         val mwAffected = extractMw(html, """<strong>MW afectados:</strong>""")
         val mwService = extractMw(html, """<strong>MW con servicio:</strong>""")
@@ -59,8 +48,9 @@ class FeedHtmlParser(private val catalog: List<CircuitInfo> = GranmaDataProvider
         Regex(pattern, RegexOption.DOT_MATCHES_ALL).find(html)?.groupValues?.getOrNull(1)
 
     private fun extractMw(html: String, label: String): Int? {
-        val m = Regex(Regex.escape(label) + r"""\s*</strong>\s*(\d+)""", RegexOption.DOT_MATCHES_ALL).find(html)
-            ?: Regex(Regex.escape(label) + r"""\s*(\d+)""", RegexOption.DOT_MATCHES_ALL).find(html)
+        val escapedLabel = Regex.escape(label)
+        val m = Regex(escapedLabel + """\s*</strong>\s*(\d+)""", RegexOption.DOT_MATCHES_ALL).find(html)
+            ?: Regex(escapedLabel + """\s*(\d+)""", RegexOption.DOT_MATCHES_ALL).find(html)
         return m?.groupValues?.getOrNull(1)?.toIntOrNull()
     }
 
@@ -78,29 +68,11 @@ class FeedHtmlParser(private val catalog: List<CircuitInfo> = GranmaDataProvider
             .mapNotNull { it.groupValues.getOrNull(1) }
             .map { stripTags(it).trim() }
             .filter { it.isNotBlank() }
+            .toList()
     }
 
     private fun stripTags(text: String): String =
-        text.replace(Regex("<[^>]*>"), " ").replace(Regex("\s+"), " ").trim()
-
-    private fun parseFeedDate(value: String?): Long? {
-        if (value.isNullOrBlank()) return null
-        val formats = listOf(
-            "yyyy-MM-dd'T'HH:mm:ss",
-            "yyyy-MM-dd'T'HH:mm:ssXXX",
-            "EEE, dd MMM yyyy HH:mm:ss Z",
-            "yyyy-MM-dd HH:mm:ss"
-        )
-        for (fmt in formats) {
-            val parsed = try {
-                SimpleDateFormat(fmt, Locale.US).parse(value)?.time
-            } catch (e: Exception) {
-                null
-            }
-            if (parsed != null) return parsed
-        }
-        return null
-    }
+        text.replace(Regex("<[^>]*>"), " ").replace(Regex("""\s+"""), " ").trim()
 
     /** Convierte los items del feed en ElectricalReport listos para aplicar al catálogo. */
     fun toReports(items: List<FeedItem>, sourceUrl: String): List<ElectricalReport> {
@@ -181,8 +153,40 @@ class FeedHtmlParser(private val catalog: List<CircuitInfo> = GranmaDataProvider
                 .replace(Regex("""\p{Mn}+"""), "")
                 .lowercase(Locale.ROOT)
                 .replace(Regex("""\s+"""), " ")
+
+        fun parseFeedDate(value: String?): Long? {
+            if (value.isNullOrBlank()) return null
+            val formats = listOf(
+                "yyyy-MM-dd'T'HH:mm:ss",
+                "yyyy-MM-dd'T'HH:mm:ssXXX",
+                "EEE, dd MMM yyyy HH:mm:ss Z",
+                "yyyy-MM-dd HH:mm:ss"
+            )
+            for (fmt in formats) {
+                val parsed = try {
+                    SimpleDateFormat(fmt, Locale.US).parse(value)?.time
+                } catch (e: Exception) {
+                    null
+                }
+                if (parsed != null) return parsed
+            }
+            return null
+        }
     }
 
     private fun formatDate(ms: Long): String =
         SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale("es")).format(Date(ms))
 }
+
+/** Item del feed parseado, usado internamente para construir ElectricalReport. */
+data class FeedItem(
+    val title: String,
+    val postId: String?,
+    val publishedAtMs: Long?,
+    val mwAffected: Int?,
+    val mwService: Int?,
+    val outageNames: List<String>,
+    val energizedNames: List<String>,
+    val rotationNames: List<String>,
+    val rawHtml: String
+)

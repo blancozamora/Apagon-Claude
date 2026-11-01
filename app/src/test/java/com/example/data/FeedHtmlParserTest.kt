@@ -3,6 +3,7 @@ package com.example.data
 import com.example.data.model.CircuitInfo
 import com.example.data.model.CircuitStatus
 import com.example.data.parser.FeedHtmlParser
+import com.example.data.parser.FeedItem
 import com.example.data.provider.GranmaDataProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
