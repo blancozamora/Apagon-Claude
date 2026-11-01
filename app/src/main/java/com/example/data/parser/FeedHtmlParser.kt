@@ -5,9 +5,11 @@ import com.example.data.model.CircuitStatus
 import com.example.data.model.CircuitUpdate
 import com.example.data.model.ElectricalReport
 import com.example.data.provider.GranmaDataProvider
+import java.text.ParsePosition
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import java.util.UUID
 import kotlin.text.RegexOption
 
@@ -15,8 +17,25 @@ import kotlin.text.RegexOption
  * Parser dedicado al feed HTML de https://tg.i-c-a.su/rss/UNE_EEG.
  * Extrae artículos con listas de circuitos por estado (afectados/restablecidos/rotación)
  * y los resuelve contra el catálogo de circuitos.
+ *
+ * La resolución de nombres es determinista: coincide el nombre completo del circuito (sin distinguir
+ * mayúsculas ni acentos, y conservando códigos como "o813") o figura en [aliases]. Un nombre que no
+ * cumple ninguna de las dos cosas queda sin resolver (y se informa en el resumen) en vez de adivinarse.
  */
-class FeedHtmlParser(private val catalog: List<CircuitInfo> = GranmaDataProvider.getDefaultCircuits()) {
+class FeedHtmlParser(
+    private val catalog: List<CircuitInfo> = GranmaDataProvider.getDefaultCircuits(),
+    aliases: Map<String, String> = GranmaDataProvider.getFeedAliases()
+) {
+
+    /** nombre normalizado -> circuitos del catálogo con ese nombre */
+    private val nameIndex: Map<String, List<CircuitInfo>> =
+        catalog.groupBy { normalize(cleanFeedName(it.name)) }
+
+    /** nombre del feed (normalizado) -> circuito del catálogo, para los nombres que el catálogo no tiene como propios */
+    private val aliasIndex: Map<String, CircuitInfo> = run {
+        val byId = catalog.associateBy { it.id }
+        aliases.mapNotNull { (feedName, id) -> byId[id]?.let { normalize(cleanFeedName(feedName)) to it } }.toMap()
+    }
 
     fun parse(html: String): List<FeedItem> {
         val articles = html.split("<article class=\"item\">").drop(1).mapNotNull { chunk ->
@@ -95,10 +114,11 @@ class FeedHtmlParser(private val catalog: List<CircuitInfo> = GranmaDataProvider
                 }
             }
 
-            val deficitMw = item.mwAffected ?: item.mwService
+            // "MW con servicio" no es un déficit, así que no sirve de respaldo si falta "MW afectados"
+            val deficitMw = item.mwAffected
 
             val nowMs = item.publishedAtMs ?: System.currentTimeMillis()
-            val dateLabel = if (item.publishedAtMs == null) "Ingresado " else "" + formatDate(nowMs)
+            val dateLabel = (if (item.publishedAtMs == null) "Ingresado " else "") + formatDate(nowMs)
 
             val summary = buildString {
                 append("Comunicado del feed oficial. ")
@@ -129,25 +149,18 @@ class FeedHtmlParser(private val catalog: List<CircuitInfo> = GranmaDataProvider
     }
 
     internal fun resolveCircuit(name: String): List<CircuitInfo> {
-        val clean = cleanFeedName(name)
-        val norm = normalize(clean)
+        val norm = normalize(cleanFeedName(name))
         if (norm.isBlank()) return emptyList()
-
-        val exact = catalog.filter { normalize(it.name) == norm }
-        if (exact.isNotEmpty()) return exact
-
-        return catalog.filter {
-            val cName = normalize(it.name)
-            cName.contains(norm) || norm.contains(cName)
-        }
+        nameIndex[norm]?.let { return it }
+        return listOfNotNull(aliasIndex[norm])
     }
 
-    internal fun cleanFeedName(name: String): String {
-        var n = name.trim()
-        n = n.replace(Regex("""\s*\([^)]*\)"""), "")
-        n = n.replace(Regex("""\s*o\d+$""", RegexOption.IGNORE_CASE), "")
-        return n.trim()
-    }
+    /**
+     * Quita solo los comentarios entre paréntesis ("Niquero (completo)" -> "Niquero").
+     * Los códigos como "o813" se conservan: distinguen circuitos distintos ("Las Mercedes o813" / "o809").
+     */
+    internal fun cleanFeedName(name: String): String =
+        name.trim().replace(Regex("""\s*\([^)]*\)"""), "").trim()
 
     companion object {
         fun normalize(s: String): String =
@@ -156,23 +169,38 @@ class FeedHtmlParser(private val catalog: List<CircuitInfo> = GranmaDataProvider
                 .lowercase(Locale.ROOT)
                 .replace(Regex("""\s+"""), " ")
 
+        /**
+         * Zona de las horas del feed que no traen offset ("2026-11-01T20:03:07").
+         * Se comprobó que NO son hora de Cuba (UTC-5): el feed publicó avisos con una hora posterior a la hora
+         * local de La Habana en ese momento. Se asumen UTC; si resultara ser otra zona, basta cambiar esta constante.
+         */
+        val FEED_NAIVE_TIME_ZONE: TimeZone = TimeZone.getTimeZone("UTC")
+
+        private val FORMATS_WITH_ZONE = listOf(
+            "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+            "yyyy-MM-dd'T'HH:mm:ssXXX",
+            "EEE, dd MMM yyyy HH:mm:ss Z"
+        )
+        private val FORMATS_WITHOUT_ZONE = listOf(
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd HH:mm:ss"
+        )
+
+        /** Fecha del feed en ms. Un offset explícito manda; sin offset se usa [FEED_NAIVE_TIME_ZONE]. */
         fun parseFeedDate(value: String?): Long? {
             if (value.isNullOrBlank()) return null
-            val formats = listOf(
-                "yyyy-MM-dd'T'HH:mm:ss",
-                "yyyy-MM-dd'T'HH:mm:ssXXX",
-                "EEE, dd MMM yyyy HH:mm:ss Z",
-                "yyyy-MM-dd HH:mm:ss"
-            )
-            for (fmt in formats) {
-                val parsed = try {
-                    SimpleDateFormat(fmt, Locale.US).parse(value)?.time
-                } catch (e: Exception) {
-                    null
-                }
-                if (parsed != null) return parsed
-            }
-            return null
+            val text = value.trim()
+            return FORMATS_WITH_ZONE.firstNotNullOfOrNull { parseExact(it, text, null) }
+                ?: FORMATS_WITHOUT_ZONE.firstNotNullOfOrNull { parseExact(it, text, FEED_NAIVE_TIME_ZONE) }
+        }
+
+        /** Interpreta el texto completo (no solo un prefijo, que dejaría ignorar un offset) con el formato dado. */
+        private fun parseExact(pattern: String, text: String, zone: TimeZone?): Long? {
+            val format = SimpleDateFormat(pattern, Locale.US)
+            if (zone != null) format.timeZone = zone
+            val position = ParsePosition(0)
+            val date = format.parse(text, position)
+            return if (date != null && position.index == text.length) date.time else null
         }
     }
 

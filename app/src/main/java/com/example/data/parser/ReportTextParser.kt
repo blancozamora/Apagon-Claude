@@ -25,7 +25,7 @@ import java.util.UUID
  *
  * No depende de Android, por lo que se puede probar con tests unitarios simples.
  */
-class ReportTextParser(private val catalog: List<CircuitInfo> = GranmaDataProvider.getDefaultCircuits()) {
+class ReportTextParser(private val catalog: List<CircuitInfo> = GranmaDataProvider.getBaseCircuits()) {
 
     private class Mention(val position: Int, val municipality: String)
     private class StatusMark(val start: Int, val end: Int, val status: CircuitStatus)
