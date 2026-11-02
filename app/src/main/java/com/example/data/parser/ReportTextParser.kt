@@ -313,8 +313,12 @@ class ReportTextParser(private val catalog: List<CircuitInfo> = GranmaDataProvid
 
     private fun extractDeficitMw(norm: String): Int? {
         for (m in MW_REGEX.findAll(norm)) {
-            val window = norm.substring(maxOf(0, m.range.first - 60), m.range.first)
-            if (!DEFICIT_WORDS.containsMatchIn(window)) continue
+            val start = m.range.first
+            val end = m.range.last
+            // Busca palabras de déficit tanto antes como después del valor MW
+            val beforeWindow = norm.substring(maxOf(0, start - 60), start)
+            val afterWindow = norm.substring(end, minOf(norm.length, end + 60))
+            if (!DEFICIT_WORDS.containsMatchIn(beforeWindow) && !DEFICIT_WORDS.containsMatchIn(afterWindow)) continue
             val value = parseMw(m.groupValues[1]) ?: continue
             return value
         }
