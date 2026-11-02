@@ -96,7 +96,7 @@ class ReportParserEngine(private val parser: ReportTextParser = ReportTextParser
                     return tryFetch(telegramUrl, true)
                 }
                 Log.e("ReportParserEngine", "Error fetching channel${if (isFallback) " (fallback)" else ""}", e)
-                Result.failure(e)
+                return Result.failure(e)
             }
             // Should never reach here, but satisfies compiler
             return@tryFetch Result.failure(IllegalStateException("tryFetch completed without returning"))
